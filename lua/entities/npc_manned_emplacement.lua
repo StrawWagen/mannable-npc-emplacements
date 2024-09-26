@@ -595,7 +595,7 @@ function ENT:Think()
                     if canSeeResult.HitWorld then
                         notSeeEnemyBoredTolerance = 0.5
 
-                    elseif canSeeResult.Hit and not hitEnemy and hitEnt.Health and hitEnt:Health() >= 1 then
+                    elseif canSeeResult.Hit and not hitEnemy and hitEnt.Health and hitEnt:Health() >= 1 then -- BORE THROUGH THE BREAKABLE PROPS! 
                         notSeeEnemyBoredTolerance = 20
 
                     end
