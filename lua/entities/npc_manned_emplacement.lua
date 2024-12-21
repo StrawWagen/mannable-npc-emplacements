@@ -113,7 +113,8 @@ end
 local function ThisCanManTurret( self, turret )
     if not ( IsValid( self ) and IsValid( turret ) ) then return false end
     if self.OnEmplacementBlacklist then return false end
-    if self:GetPos():Distance( turret:GetPos() ) > turret.MaxAcquireDist then return false end
+    local acquireDist = turret:GetAcquireDist()
+    if self:GetPos():Distance( turret:GetPos() ) > acquireDist then return false end
     if IsAlreadyManning( self ) then return false end
     local Enemy = self:GetEnemy()
     local HasEnemy = IsValid( Enemy )
@@ -122,7 +123,7 @@ local function ThisCanManTurret( self, turret )
         local MuzzleTach = turret:LookupAttachment( "muzzle" )
         local Attachment = turret:GetAttachment( MuzzleTach )
         local TurrVisible = Enemy:VisibleVec( Attachment.Pos )
-        local EnemyFar = Enemy:GetPos():Distance( turret:GetPos() ) > ( turret.MaxAcquireDist * 1.75 )
+        local EnemyFar = Enemy:GetPos():Distance( turret:GetPos() ) > ( acquireDist * 1.75 )
         local Shootable = turret:EmplacementCanShoot( turret:EntShootPos( Enemy ) ) and self:Visible( Enemy ) and TurrVisible
         TurrCanShootEnemy = Shootable or EnemyFar
     end
@@ -146,6 +147,9 @@ local function SetupTimers( self )
     self.NextDismountSentence = 0
     self.NextLowAmmoSentence = 0
     self.NextDoneReloadSentence = 0
+
+    self.MinAcquireDist = 1000
+    self.MaxAcquireDist = 2500
 end
 
 local function NpcLikes( Npc1, Npc2 )
@@ -205,7 +209,6 @@ function ENT:Initialize()
 
     self.EmplUser = nil
     self.ManningDist = 20
-    self.MaxAcquireDist = 1000
 
     duplicator.Allow( "npc_manned_emplacement" )
 
@@ -219,6 +222,15 @@ function ENT:Initialize()
     self.MaxElevation = MaxElev - 0.5
 
 end
+
+function ENT:GetAcquireDist()
+    local rad = self.MinAcquireDist
+    local failedSearches = self.empl_FailedSearches or 0
+    rad = rad + ( failedSearches * 10 )
+    return math.Clamp( rad, 0, self.MaxAcquireDist )
+
+end
+
 
 function ENT:PutNpcInCorrectPos( NPC )
     if not IsValid( NPC ) then return end
@@ -391,11 +403,19 @@ function ENT:Think()
         local UserIsPly = false
         local validUser = IsValid( myTbl.EmplUser )
         if not validUser and myTbl.NextNpcSearch < cur then
-            myTbl.NextNpcSearch = cur + math.Rand( 0.9, 1.1 )
+            local failedSearches = myTbl.empl_FailedSearches or 0
+            myTbl.NextNpcSearch = cur + math.Rand( 0.9, 1.1 ) + ( failedSearches * 0.25 )
             self:SearchForPersonToManIt()
-            --print( myTbl.EmplUser )
+            if IsValid( myTbl.EmplUser ) or IsValid( myTbl.NpcToManTheTurret ) then
+                myTbl.empl_FailedSearches = 0
+                validUser = IsValid( myTbl.EmplUser )
+
+            else
+                myTbl.empl_FailedSearches = failedSearches + 1
+
+            end
         end
-        if validUser then -- do this isvalid twice cuz a user may have been found
+        if validUser then
             UserIsNpc = myTbl.EmplUser:IsNPC()
             UserIsPly = myTbl.EmplUser:IsPlayer()
 
@@ -886,11 +906,12 @@ function ENT:OnTakeDamage( damage )
 
 end
 
+local entMeta = FindMetaTable( "Entity" )
 function ENT:EntShootPos( ent, random ) -- from termhunter repo!
+    if not IsValid( ent ) then return end
     local hitboxes = {}
-    if not ent then return end
 
-    local sets = ent:GetHitboxSetCount()
+    local sets = entMeta.GetHitboxSetCount( ent )
 
     local isPly = ent:IsPlayer()
     local isPlayerInVehicle = isPly and ent:InVehicle()
@@ -905,11 +926,11 @@ function ENT:EntShootPos( ent, random ) -- from termhunter repo!
 
         if not data then
             for num1 = 0, sets - 1 do
-                for num2 = 0, ent:GetHitBoxCount( num1 ) - 1 do
-                    local group = ent:GetHitBoxHitGroup( num2, num1 )
+                for num2 = 0, entMeta.GetHitBoxCount( ent, num1 ) - 1 do
+                    local group = entMeta.GetHitBoxHitGroup( ent, num2, num1 )
 
                     hitboxes[group] = hitboxes[group] or {}
-                    hitboxes[group][#hitboxes[group] + 1] = { ent:GetHitBoxBone( num2, num1 ), ent:GetHitBoxBounds( num2, num1 ) }
+                    hitboxes[group][#hitboxes[group] + 1] = { entMeta.GetHitBoxBone( ent, num2, num1 ), entMeta.GetHitBoxBounds( ent, num2, num1 ) }
 
                 end
             end
@@ -935,12 +956,14 @@ function ENT:EntShootPos( ent, random ) -- from termhunter repo!
         end
 
         if data then
-            local bonem = ent:GetBoneMatrix( data[1] )
-            local theCenter = data[2] + ( data[3] - data[2] ) / 2
+            local bonem = entMeta.GetBoneMatrix( ent, data[1] )
+            if bonem then
+                local theCenter = data[2] + ( data[3] - data[2] ) / 2
 
-            local pos = LocalToWorld( theCenter, angle_zero, bonem:GetTranslation(), bonem:GetAngles() )
-            return pos
+                local pos = LocalToWorld( theCenter, angle_zero, bonem:GetTranslation(), bonem:GetAngles() )
+                return pos
 
+            end
         end
     end
 
@@ -1150,7 +1173,8 @@ function ENT:SearchForPersonToManIt()
         end
     elseif self.FreeGun and not IsAlreadyManning( self.NpcToManTheTurret ) then
         local NearbyNpcs = {}
-        local NearbyEnts = ents.FindInSphere( StandPos, turret.MaxAcquireDist )
+        local rad = self:GetAcquireDist()
+        local NearbyEnts = ents.FindInSphere( StandPos, rad )
         for _, CurrentEnt in ipairs( NearbyEnts ) do
             if IsValidManner( CurrentEnt ) then
                 if WaitToGiveLeaderAChance( CurrentEnt ) == nil then -- we have not been told to wait
