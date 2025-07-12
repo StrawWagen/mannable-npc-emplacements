@@ -914,13 +914,9 @@ function ENT:EntShootPos( ent, random ) -- from termhunter repo!
     local sets = entMeta.GetHitboxSetCount( ent )
 
     local isPly = ent:IsPlayer()
-    local isPlayerInVehicle = isPly and ent:InVehicle()
     local isCrouchingPlayer = isPly and ent:Crouching()
 
-    if isPlayerInVehicle then
-        return self:getBestPos( ent:GetVehicle() )
-
-    elseif not isCrouchingPlayer and sets then
+    if not isCrouchingPlayer and sets then
 
         local data = ent.cachedHitboxData or nil
 
